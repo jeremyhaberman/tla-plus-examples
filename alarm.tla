@@ -4,115 +4,191 @@ EXTENDS Integers, TLC, Sequences, FiniteSets
 
 (*--algorithm alarm
 
-\* Alarm Clock
-\* - 24-hour clock
-\* - alarm time can be set for any hour+minute
+\* Simple Timer
+\* - alarm time can be set for any minute
 \* - alarm can be on or off
 \* - 3-minute snooze
 \* - alarm rings for max of 5 minutes
 
 variables
 
-    max_time = 20,
+    max_time = 60,
     
     on = FALSE,
     ringing = FALSE,
+    snoozing = FALSE,
     alarm_time \in 1..max_time,
-    current_time = 0;
+    snooze_time = 0,
+    current_time = 0,
+    
+    effective_alarm_time = alarm_time;
     
 define
 
-    \* Is there a simpler way to specify this?
-    OnlyRingIfOn == (ringing = TRUE /\ on = TRUE)
-                    \/ (ringing = FALSE /\ on = TRUE)
-                    \/ (ringing = FALSE /\ on = FALSE)
+    NoRingingWhileOff == ~(ringing = TRUE /\ on = FALSE)
+    NoRingingWhileSnoozing == ~(ringing = TRUE /\ snoozing = TRUE)
+    NoSnoozingWhileOff == ~(snoozing = TRUE /\ on = FALSE)
+    NoSnoozingMoreThanThreeMinutes == ~(snoozing = TRUE /\ (current_time - snooze_time > 3))
+    NoRingingMoreThanFiveMinutes == ~(ringing = TRUE /\ (current_time - effective_alarm_time > 5))
     
 end define;
 
+macro turn_on() begin
+    on := TRUE;
+end macro;
+
+macro ring_alarm() begin
+    ringing := TRUE;
+    snoozing := FALSE;
+    snooze_time := 0;
+end macro;
+
+macro turn_off() begin
+    ringing := FALSE;
+    snoozing := FALSE;
+    effective_alarm_time := alarm_time;
+end macro;
+
+macro snooze() begin
+    ringing := FALSE;
+    snoozing := TRUE;
+    snooze_time := current_time;    
+    effective_alarm_time := current_time + 3;
+end macro;
+
 begin
-    ClockTick:
-        while current_time <= max_time do
-            current_time := current_time + 1;
-            
-            \* ring alarm
-            if on /\ alarm_time = current_time then
-                RingAlarm:
-                    ringing := TRUE;
+    
+    while current_time <= max_time do
+        current_time := current_time + 1;
+        
+        \* -------------------------------------------------------
+        \* These first two parts are automatic system functions
+        \* -------------------------------------------------------
+        
+        \* If ringing more than five minutes, stop
+        if ringing = TRUE /\ (current_time - effective_alarm_time >= 5) then
+            turn_off()
+        end if;
+
+        \* If the alarm is on and it's time, ring the alarm!
+        if on = TRUE /\ (effective_alarm_time >= current_time) then
+            ring_alarm()
+        end if;
+        
+        \* --------------------------------------------
+        \* This section handles the user's response:
+        \*     turn on, turn off, snooze, or do nothing
+        \* --------------------------------------------
+        
+        either     
+            if on = FALSE then
+                turn_on()
             end if;
-       
-            \* turn on, ignore if ringing, or turn off
-            Reaction:
-                either     
-                    TurnOn:
-                        on := TRUE;
+        or
+            if on = TRUE then
+                turn_off()
+            end if;
+        or
+            if ringing = TRUE then
+                either
+                    snooze()
                 or
-                    if ringing = TRUE then
-                        either
-                            TurnOff:
-                                ringing := FALSE;
-                        or
-                            skip
-                        end either;
-                    end if;
+                    turn_off()
                 end either;
+            end if;
+        or
+            skip
             
-        end while;
+        end either;
+        
+    end while;
 
 end algorithm; *)
 \* BEGIN TRANSLATION
-VARIABLES max_time, on, ringing, alarm_time, current_time, pc
+VARIABLES max_time, on, ringing, snoozing, alarm_time, snooze_time, 
+          current_time, effective_alarm_time, pc
 
 (* define statement *)
-OnlyRingIfOn == (ringing = TRUE /\ on = TRUE)
-                \/ (ringing = FALSE /\ on = TRUE)
-                \/ (ringing = FALSE /\ on = FALSE)
+NoRingingWhileOff == ~(ringing = TRUE /\ on = FALSE)
+NoRingingWhileSnoozing == ~(ringing = TRUE /\ snoozing = TRUE)
+NoSnoozingWhileOff == ~(snoozing = TRUE /\ on = FALSE)
+NoSnoozingMoreThanThreeMinutes == ~(snoozing = TRUE /\ (current_time - snooze_time > 3))
+NoRingingMoreThanFiveMinutes == ~(ringing = TRUE /\ (current_time - effective_alarm_time > 5))
 
 
-vars == << max_time, on, ringing, alarm_time, current_time, pc >>
+vars == << max_time, on, ringing, snoozing, alarm_time, snooze_time, 
+           current_time, effective_alarm_time, pc >>
 
 Init == (* Global variables *)
-        /\ max_time = 20
+        /\ max_time = 60
         /\ on = FALSE
         /\ ringing = FALSE
+        /\ snoozing = FALSE
         /\ alarm_time \in 1..max_time
+        /\ snooze_time = 0
         /\ current_time = 0
-        /\ pc = "ClockTick"
+        /\ effective_alarm_time = alarm_time
+        /\ pc = "Lbl_1"
 
-ClockTick == /\ pc = "ClockTick"
-             /\ IF current_time <= max_time
-                   THEN /\ current_time' = current_time + 1
-                        /\ IF on /\ alarm_time = current_time'
-                              THEN /\ pc' = "RingAlarm"
-                              ELSE /\ pc' = "Reaction"
-                   ELSE /\ pc' = "Done"
-                        /\ UNCHANGED current_time
-             /\ UNCHANGED << max_time, on, ringing, alarm_time >>
+Lbl_1 == /\ pc = "Lbl_1"
+         /\ IF current_time <= max_time
+               THEN /\ current_time' = current_time + 1
+                    /\ IF ringing = TRUE /\ (current_time' - effective_alarm_time >= 5)
+                          THEN /\ ringing' = FALSE
+                               /\ snoozing' = FALSE
+                               /\ effective_alarm_time' = alarm_time
+                          ELSE /\ TRUE
+                               /\ UNCHANGED << ringing, snoozing, 
+                                               effective_alarm_time >>
+                    /\ IF on = TRUE /\ (effective_alarm_time' >= current_time')
+                          THEN /\ pc' = "Lbl_2"
+                          ELSE /\ pc' = "Lbl_3"
+               ELSE /\ pc' = "Done"
+                    /\ UNCHANGED << ringing, snoozing, current_time, 
+                                    effective_alarm_time >>
+         /\ UNCHANGED << max_time, on, alarm_time, snooze_time >>
 
-Reaction == /\ pc = "Reaction"
-            /\ \/ /\ pc' = "TurnOn"
-               \/ /\ IF ringing = TRUE
-                        THEN /\ \/ /\ pc' = "TurnOff"
-                                \/ /\ TRUE
-                                   /\ pc' = "ClockTick"
-                        ELSE /\ pc' = "ClockTick"
-            /\ UNCHANGED << max_time, on, ringing, alarm_time, current_time >>
+Lbl_3 == /\ pc = "Lbl_3"
+         /\ \/ /\ IF on = FALSE
+                     THEN /\ on' = TRUE
+                     ELSE /\ TRUE
+                          /\ on' = on
+               /\ UNCHANGED <<ringing, snoozing, snooze_time, effective_alarm_time>>
+            \/ /\ IF on = TRUE
+                     THEN /\ ringing' = FALSE
+                          /\ snoozing' = FALSE
+                          /\ effective_alarm_time' = alarm_time
+                     ELSE /\ TRUE
+                          /\ UNCHANGED << ringing, snoozing, 
+                                          effective_alarm_time >>
+               /\ UNCHANGED <<on, snooze_time>>
+            \/ /\ IF ringing = TRUE
+                     THEN /\ \/ /\ ringing' = FALSE
+                                /\ snoozing' = TRUE
+                                /\ snooze_time' = current_time
+                                /\ effective_alarm_time' = current_time + 3
+                             \/ /\ ringing' = FALSE
+                                /\ snoozing' = FALSE
+                                /\ effective_alarm_time' = alarm_time
+                                /\ UNCHANGED snooze_time
+                     ELSE /\ TRUE
+                          /\ UNCHANGED << ringing, snoozing, snooze_time, 
+                                          effective_alarm_time >>
+               /\ on' = on
+            \/ /\ TRUE
+               /\ UNCHANGED <<on, ringing, snoozing, snooze_time, effective_alarm_time>>
+         /\ pc' = "Lbl_1"
+         /\ UNCHANGED << max_time, alarm_time, current_time >>
 
-TurnOn == /\ pc = "TurnOn"
-          /\ on' = TRUE
-          /\ pc' = "ClockTick"
-          /\ UNCHANGED << max_time, ringing, alarm_time, current_time >>
+Lbl_2 == /\ pc = "Lbl_2"
+         /\ ringing' = TRUE
+         /\ snoozing' = FALSE
+         /\ snooze_time' = 0
+         /\ pc' = "Lbl_3"
+         /\ UNCHANGED << max_time, on, alarm_time, current_time, 
+                         effective_alarm_time >>
 
-TurnOff == /\ pc = "TurnOff"
-           /\ ringing' = FALSE
-           /\ pc' = "ClockTick"
-           /\ UNCHANGED << max_time, on, alarm_time, current_time >>
-
-RingAlarm == /\ pc = "RingAlarm"
-             /\ ringing' = TRUE
-             /\ pc' = "Reaction"
-             /\ UNCHANGED << max_time, on, alarm_time, current_time >>
-
-Next == ClockTick \/ Reaction \/ TurnOn \/ TurnOff \/ RingAlarm
+Next == Lbl_1 \/ Lbl_3 \/ Lbl_2
            \/ (* Disjunct to prevent deadlock on termination *)
               (pc = "Done" /\ UNCHANGED vars)
 
@@ -124,5 +200,5 @@ Termination == <>(pc = "Done")
 
 =============================================================================
 \* Modification History
-\* Last modified Sun Mar 31 11:05:49 CDT 2019 by jeremy
+\* Last modified Sun Mar 31 13:14:46 CDT 2019 by jeremy
 \* Created Sun Mar 31 07:15:24 CDT 2019 by jeremy
