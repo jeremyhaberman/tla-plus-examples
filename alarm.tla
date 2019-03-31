@@ -20,7 +20,7 @@ variables
     \* I used '20' during development, and it would run within ~10 seconds
     \* '1440' took ~4 minutes (on an old iMac) and found 55,863,472 distinct
     \* states.
-    max_time = 1440,
+    max_time = 60,
     
     on = FALSE,
     ringing = FALSE,
@@ -50,8 +50,8 @@ define
     AlarmOff == on = FALSE
     AlarmOn == on = TRUE
     Ringing == ringing = TRUE
-    RingingForAtLeastFiveMinutes == ringing = TRUE /\ (current_time - effective_alarm_time >= 5)
-    OnAndCurrentTimeIsAlarmTime == on = TRUE /\ (effective_alarm_time >= current_time)
+    RingingForAtLeastFiveMinutes == Ringing /\ (current_time - effective_alarm_time >= 5)
+    OnAndCurrentTimeIsAlarmTime == AlarmOn /\ ~Ringing /\ (effective_alarm_time >= current_time)
     
 end define;
 
@@ -82,54 +82,53 @@ macro snooze() begin
     effective_alarm_time := current_time + 3;
 end macro;
 
+macro press_on_off_button() begin
+    if AlarmOff then
+        turn_on()
+    else
+        turn_off()
+    end if;
+end macro;
+
+macro press_snooze() begin
+    if Ringing then
+        snooze()
+    end if;
+end macro;
+
 begin
     
     while current_time <= max_time do
     
         simulate_clock_tick();
         
-        \* -------------------------------------------------------
-        \* These first two parts are automatic system functions
-        \* -------------------------------------------------------
+        \* Automatic system functions
         
         if RingingForAtLeastFiveMinutes then
             turn_off()
-        end if;
-
-        if OnAndCurrentTimeIsAlarmTime then
+        elsif OnAndCurrentTimeIsAlarmTime then
             ring_alarm()
         end if;
         
-        \* --------------------------------------------
-        \* This section handles the user's response:
-        \*     turn on, turn off, snooze, or do nothing
-        \* --------------------------------------------
+        \* Possible user action
         
-        either     
-            if AlarmOff then
-                turn_on()
-            end if;
+        either
+            \* If off:
+            \* - turn on
+            \* If on:
+            \* - alarm ringing and want to turn it off or
+            \* - turn off alarm before it rings.
+            press_on_off_button()
         or
-            if AlarmOn then
-                turn_off()
-            end if;
+            \* If alarm is ringing:
+            \* - snooze
+            \* If alarm is not ringing:
+            \* - Turn on backlight (not currently supported)
+            press_snooze()
         or
-            if Ringing then
-                either
-                    snooze()
-                or
-                    \* It seems like it might be wrong to have two spots here
-                    \* where the alarm is turned off, but I thought it would be
-                    \* appropriate to explicitly cover the case where the alarm
-                    \* is ringing. Not sure if it matters.
-                    turn_off()
-                or
-                    skip;
-                end either;
-            end if;
-        or
+            \* Do nothing cause the alarm isn't ringing or
+            \* the alarm is ringing but being ignored.
             skip;
-            
         end either;
         
     end while;
@@ -153,15 +152,15 @@ NoRingingMoreThanFiveMinutes == ~(ringing = TRUE /\ (current_time - effective_al
 AlarmOff == on = FALSE
 AlarmOn == on = TRUE
 Ringing == ringing = TRUE
-RingingForAtLeastFiveMinutes == ringing = TRUE /\ (current_time - effective_alarm_time >= 5)
-OnAndCurrentTimeIsAlarmTime == on = TRUE /\ (effective_alarm_time >= current_time)
+RingingForAtLeastFiveMinutes == Ringing /\ (current_time - effective_alarm_time >= 5)
+OnAndCurrentTimeIsAlarmTime == AlarmOn /\ ~Ringing /\ (effective_alarm_time >= current_time)
 
 
 vars == << max_time, on, ringing, snoozing, alarm_time, snooze_time, 
            current_time, effective_alarm_time, pc >>
 
 Init == (* Global variables *)
-        /\ max_time = 1440
+        /\ max_time = 60
         /\ on = FALSE
         /\ ringing = FALSE
         /\ snoozing = FALSE
@@ -178,60 +177,48 @@ Lbl_1 == /\ pc = "Lbl_1"
                           THEN /\ ringing' = FALSE
                                /\ snoozing' = FALSE
                                /\ effective_alarm_time' = alarm_time
-                          ELSE /\ TRUE
-                               /\ UNCHANGED << ringing, snoozing, 
-                                               effective_alarm_time >>
-                    /\ IF OnAndCurrentTimeIsAlarmTime
-                          THEN /\ pc' = "Lbl_2"
-                          ELSE /\ pc' = "Lbl_3"
-               ELSE /\ pc' = "Done"
-                    /\ UNCHANGED << ringing, snoozing, current_time, 
-                                    effective_alarm_time >>
-         /\ UNCHANGED << max_time, on, alarm_time, snooze_time >>
-
-Lbl_3 == /\ pc = "Lbl_3"
-         /\ \/ /\ IF AlarmOff
-                     THEN /\ on' = TRUE
-                     ELSE /\ TRUE
+                               /\ UNCHANGED snooze_time
+                          ELSE /\ IF OnAndCurrentTimeIsAlarmTime
+                                     THEN /\ ringing' = TRUE
+                                          /\ snoozing' = FALSE
+                                          /\ snooze_time' = 0
+                                     ELSE /\ TRUE
+                                          /\ UNCHANGED << ringing, snoozing, 
+                                                          snooze_time >>
+                               /\ UNCHANGED effective_alarm_time
+                    /\ \/ /\ IF AlarmOff
+                                THEN /\ on' = TRUE
+                                     /\ pc' = "Lbl_1"
+                                ELSE /\ pc' = "Lbl_2"
+                                     /\ on' = on
+                       \/ /\ IF Ringing
+                                THEN /\ pc' = "Lbl_3"
+                                ELSE /\ pc' = "Lbl_1"
                           /\ on' = on
-               /\ UNCHANGED <<ringing, snoozing, snooze_time, effective_alarm_time>>
-            \/ /\ IF AlarmOn
-                     THEN /\ ringing' = FALSE
-                          /\ snoozing' = FALSE
-                          /\ effective_alarm_time' = alarm_time
-                     ELSE /\ TRUE
-                          /\ UNCHANGED << ringing, snoozing, 
-                                          effective_alarm_time >>
-               /\ UNCHANGED <<on, snooze_time>>
-            \/ /\ IF Ringing
-                     THEN /\ \/ /\ ringing' = FALSE
-                                /\ snoozing' = TRUE
-                                /\ snooze_time' = current_time
-                                /\ effective_alarm_time' = current_time + 3
-                             \/ /\ ringing' = FALSE
-                                /\ snoozing' = FALSE
-                                /\ effective_alarm_time' = alarm_time
-                                /\ UNCHANGED snooze_time
-                             \/ /\ TRUE
-                                /\ UNCHANGED <<ringing, snoozing, snooze_time, effective_alarm_time>>
-                     ELSE /\ TRUE
-                          /\ UNCHANGED << ringing, snoozing, snooze_time, 
-                                          effective_alarm_time >>
-               /\ on' = on
-            \/ /\ TRUE
-               /\ UNCHANGED <<on, ringing, snoozing, snooze_time, effective_alarm_time>>
-         /\ pc' = "Lbl_1"
-         /\ UNCHANGED << max_time, alarm_time, current_time >>
+                       \/ /\ TRUE
+                          /\ pc' = "Lbl_1"
+                          /\ on' = on
+               ELSE /\ pc' = "Done"
+                    /\ UNCHANGED << on, ringing, snoozing, snooze_time, 
+                                    current_time, effective_alarm_time >>
+         /\ UNCHANGED << max_time, alarm_time >>
 
 Lbl_2 == /\ pc = "Lbl_2"
-         /\ ringing' = TRUE
+         /\ ringing' = FALSE
          /\ snoozing' = FALSE
-         /\ snooze_time' = 0
-         /\ pc' = "Lbl_3"
-         /\ UNCHANGED << max_time, on, alarm_time, current_time, 
-                         effective_alarm_time >>
+         /\ effective_alarm_time' = alarm_time
+         /\ pc' = "Lbl_1"
+         /\ UNCHANGED << max_time, on, alarm_time, snooze_time, current_time >>
 
-Next == Lbl_1 \/ Lbl_3 \/ Lbl_2
+Lbl_3 == /\ pc = "Lbl_3"
+         /\ ringing' = FALSE
+         /\ snoozing' = TRUE
+         /\ snooze_time' = current_time
+         /\ effective_alarm_time' = current_time + 3
+         /\ pc' = "Lbl_1"
+         /\ UNCHANGED << max_time, on, alarm_time, current_time >>
+
+Next == Lbl_1 \/ Lbl_2 \/ Lbl_3
            \/ (* Disjunct to prevent deadlock on termination *)
               (pc = "Done" /\ UNCHANGED vars)
 
@@ -243,5 +230,5 @@ Termination == <>(pc = "Done")
 
 =============================================================================
 \* Modification History
-\* Last modified Sun Mar 31 15:36:10 CDT 2019 by jeremy
+\* Last modified Sun Mar 31 17:07:26 CDT 2019 by jeremy
 \* Created Sun Mar 31 07:15:24 CDT 2019 by jeremy
