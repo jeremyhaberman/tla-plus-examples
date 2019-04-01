@@ -4,23 +4,30 @@ EXTENDS Integers, TLC, Sequences, FiniteSets
 
 (*--algorithm alarm
 
-\* Simple Alarm Clock
+\* Alarm Clock
+\*
+\* This is a spec of the Marathon Analog Desk Alarm Clock (pretend it's digital)
+\* https://www.marathonwatch.com/collections/clocks/products/analog-desk-alarm-clock-with-auto-night-light
+\*
 \* - alarm time can be set for any minute
 \* - alarm can be on or off
 \* - 3-minute snooze
 \* - alarm rings for max of 5 minutes
+\* - alarm time can be changed
+\* - show backlight when not ringing (not currently supported)
+\* - auto-night light (not currently supported)
 
-\* Time is handled by counting minutes. minutes are the smallest and only
-\* unit of time––and are atomic. This was my first attempt at writing a TLA+
-\* spec after reading chapter 2 of Practical TLA+.
+\* Time is handled by counting minutes. Minutes are the smallest and only
+\* unit of time. This was my first attempt at writing a TLA+ spec after reading
+\* chapter 2 of Practical TLA+.
 
 variables    
 
     \* Total minutes in a day
-    \* I used '20' during development, and it would run within ~10 seconds
-    \* '1440' took ~4 minutes (on an old iMac) and found 55,863,472 distinct
+    \* I used '20' during development, and it would run within ~10 seconds.
+    \* '1440' took ~5 minutes (on an old iMac) and found 69,236,189 distinct
     \* states.
-    max_time = 60,
+    max_time = 1440,
     
     on = FALSE,
     ringing = FALSE,
@@ -45,7 +52,7 @@ define
     NoRingingMoreThanFiveMinutes == ~(ringing = TRUE /\ (current_time - effective_alarm_time > 5))
     
     \* I think these help make the algorithm easier to read. I'm not sure if
-    \* these and the macros help or hurt––or perhaps some of both.
+    \* or how these and the macros may help or hurt––or perhaps some of both.
     
     AlarmOff == on = FALSE
     AlarmOn == on = TRUE
@@ -90,10 +97,16 @@ macro press_on_off_button() begin
     end if;
 end macro;
 
-macro press_snooze() begin
+macro press_snooze_light_button() begin
     if Ringing then
         snooze()
     end if;
+end macro;
+
+macro change_alarm_time() begin
+    \* this works, but it seems like there should be a simpler way
+    \* to get a number between 1..max_time
+    alarm_time := CHOOSE x \in 1..max_time : x <= max_time;
 end macro;
 
 begin
@@ -110,7 +123,7 @@ begin
             ring_alarm()
         end if;
         
-        \* Possible user action
+        \* Possible user actions
         
         either
             \* If off:
@@ -124,11 +137,17 @@ begin
             \* - snooze
             \* If alarm is not ringing:
             \* - Turn on backlight (not currently supported)
-            press_snooze()
+            press_snooze_light_button()
         or
             \* Do nothing cause the alarm isn't ringing or
             \* the alarm is ringing but being ignored.
             skip;
+        or
+            \* Allow changing the alarm time but only if the alarm is not
+            \* already ringing
+            if ~Ringing then
+                change_alarm_time();
+            end if;
         end either;
         
     end while;
@@ -160,7 +179,7 @@ vars == << max_time, on, ringing, snoozing, alarm_time, snooze_time,
            current_time, effective_alarm_time, pc >>
 
 Init == (* Global variables *)
-        /\ max_time = 60
+        /\ max_time = 20
         /\ on = FALSE
         /\ ringing = FALSE
         /\ snoozing = FALSE
@@ -191,17 +210,25 @@ Lbl_1 == /\ pc = "Lbl_1"
                                      /\ pc' = "Lbl_1"
                                 ELSE /\ pc' = "Lbl_2"
                                      /\ on' = on
+                          /\ UNCHANGED alarm_time
                        \/ /\ IF Ringing
                                 THEN /\ pc' = "Lbl_3"
                                 ELSE /\ pc' = "Lbl_1"
-                          /\ on' = on
+                          /\ UNCHANGED <<on, alarm_time>>
                        \/ /\ TRUE
+                          /\ pc' = "Lbl_1"
+                          /\ UNCHANGED <<on, alarm_time>>
+                       \/ /\ IF ~Ringing
+                                THEN /\ alarm_time' = (CHOOSE x \in 1..max_time : x <= max_time)
+                                ELSE /\ TRUE
+                                     /\ UNCHANGED alarm_time
                           /\ pc' = "Lbl_1"
                           /\ on' = on
                ELSE /\ pc' = "Done"
-                    /\ UNCHANGED << on, ringing, snoozing, snooze_time, 
-                                    current_time, effective_alarm_time >>
-         /\ UNCHANGED << max_time, alarm_time >>
+                    /\ UNCHANGED << on, ringing, snoozing, alarm_time, 
+                                    snooze_time, current_time, 
+                                    effective_alarm_time >>
+         /\ UNCHANGED max_time
 
 Lbl_2 == /\ pc = "Lbl_2"
          /\ ringing' = FALSE
@@ -230,5 +257,5 @@ Termination == <>(pc = "Done")
 
 =============================================================================
 \* Modification History
-\* Last modified Sun Mar 31 17:07:26 CDT 2019 by jeremy
+\* Last modified Sun Mar 31 19:02:11 CDT 2019 by jeremy
 \* Created Sun Mar 31 07:15:24 CDT 2019 by jeremy
